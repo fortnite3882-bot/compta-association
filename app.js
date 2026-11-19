@@ -27,6 +27,13 @@ const COLORS = ["#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"
 const KEY = "compta-asso-v1";
 const uid = () => Math.random().toString(36).slice(2, 10);
 const thisYear = new Date().getFullYear();
+
+// Connexion en ligne (Supabase). Si config.js est vide, l'app marche en mode local.
+const CFG = window.COMPTA_CONFIG || {};
+const SB = (CFG.supabaseUrl && CFG.supabaseKey && window.supabase) ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey) : null;
+let USER = null, saveTimer = null, lastRemote = "", syncState = "";
+const storageKey = () => KEY + (USER ? ":" + USER.id : "");
+
 let S = load();
 let UI = { page: "dash", year: S.years.includes(thisYear) ? thisYear : S.years[0], action: "all", q: "", fcat: "", ffin: "", fstat: "" };
 
@@ -34,10 +41,95 @@ function blank() {
   return { assoc: "Mon association", years: [thisYear], actions: [], financeurs: [], conventions: [], budget: [], depenses: [], recettes: [] };
 }
 function load() {
-  try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.years) return Object.assign(blank(), s); } catch (e) {}
+  try { const s = JSON.parse(localStorage.getItem(storageKey())); if (s && s.years) return Object.assign(blank(), s); } catch (e) {}
   return blank();
 }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+function save() {
+  try { localStorage.setItem(storageKey(), JSON.stringify(S)); } catch (e) {}
+  if (SB && USER) { setSync("saving"); clearTimeout(saveTimer); saveTimer = setTimeout(push, 700); }
+}
+async function push() {
+  clearTimeout(saveTimer); saveTimer = null;
+  const at = new Date().toISOString();
+  const { error } = await SB.from("comptes").upsert({ user_id: USER.id, data: S, updated_at: at });
+  if (error) { console.error(error); setSync("error"); } else { lastRemote = at; setSync("ok"); }
+}
+async function pull() {
+  const { data, error } = await SB.from("comptes").select("data,updated_at").eq("user_id", USER.id).maybeSingle();
+  if (error) { console.error(error); setSync("error"); return null; }
+  return data;
+}
+function setSync(st) {
+  syncState = st;
+  const el = document.getElementById("syncState");
+  if (el) el.textContent = { saving: "⏳ Enregistrement…", ok: "☁️ Enregistré en ligne", error: "⚠️ Erreur de sauvegarde" }[st] || "";
+}
+function applyRemote(row) {
+  S = Object.assign(blank(), row.data); lastRemote = row.updated_at;
+  if (!S.years.includes(UI.year)) UI.year = S.years.includes(thisYear) ? thisYear : S.years[0];
+}
+
+// ---------- Connexion ----------
+function authScreen(msg) {
+  document.getElementById("app").style.display = "none";
+  let a = document.getElementById("auth");
+  if (!a) { a = document.createElement("div"); a.id = "auth"; document.body.appendChild(a); }
+  a.innerHTML = `<form class="card authbox" id="authForm"><div class="brand"><span class="logo">€</span><div><b>Compta Asso</b><small>Connexion à ton espace</small></div></div>
+    <label>Adresse e-mail<input type="email" name="email" required autocomplete="email"></label>
+    <label>Mot de passe<input type="password" name="password" minlength="6" autocomplete="current-password"></label>
+    <p class="authmsg" id="authMsg">${esc(msg || "")}</p>
+    <button class="btn" data-mode="in">Se connecter</button>
+    <button class="btn sec" type="button" data-mode="up">Créer mon compte</button>
+    <a href="#" id="forgot">Mot de passe oublié ?</a></form>`;
+  const f = document.getElementById("authForm"), m = t => document.getElementById("authMsg").textContent = t;
+  let mode = "in";
+  f.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => { mode = b.dataset.mode; if (mode === "up") f.requestSubmit(); });
+  f.onsubmit = async ev => {
+    ev.preventDefault(); const { email, password } = Object.fromEntries(new FormData(f));
+    m("…");
+    const r = mode === "up" ? await SB.auth.signUp({ email, password, options: { emailRedirectTo: location.href.split("#")[0] } }) : await SB.auth.signInWithPassword({ email, password });
+    if (r.error) return m(r.error.message === "Invalid login credentials" ? "E-mail ou mot de passe incorrect." : r.error.message);
+    if (mode === "up" && !r.data.session) return m("Compte créé. Clique sur le lien reçu par e-mail pour le valider, puis connecte-toi.");
+    mode = "in"; start(r.data.session);
+  };
+  document.getElementById("forgot").onclick = async e => {
+    e.preventDefault(); const email = f.elements.email.value;
+    if (!email) return m("Écris d'abord ton e-mail ci-dessus.");
+    const r = await SB.auth.resetPasswordForEmail(email, { redirectTo: location.href.split("#")[0] });
+    m(r.error ? r.error.message : "E-mail envoyé : clique sur le lien pour choisir un nouveau mot de passe.");
+  };
+}
+async function start(session) {
+  USER = session.user;
+  const a = document.getElementById("auth"); if (a) a.remove();
+  document.getElementById("app").style.display = "";
+  const local = load(), row = await pull();
+  if (row) applyRemote(row);
+  else {
+    // premier passage : on reprend les données locales éventuelles
+    S = local; await push();
+  }
+  render();
+}
+async function logout() { if (saveTimer) await push(); await SB.auth.signOut(); USER = null; S = blank(); authScreen(); }
+async function refreshIfNewer() {
+  if (!SB || !USER || saveTimer) return;
+  const row = await pull();
+  if (row && row.updated_at > lastRemote) { applyRemote(row); render(); }
+}
+async function boot() {
+  if (!SB) return render();
+  SB.auth.onAuthStateChange(async ev => {
+    if (ev === "PASSWORD_RECOVERY") {
+      const pw = prompt("Choisis ton nouveau mot de passe (6 caractères minimum) :");
+      if (pw) { const r = await SB.auth.updateUser({ password: pw }); alert(r.error ? r.error.message : "Mot de passe changé."); }
+    }
+  });
+  const { data } = await SB.auth.getSession();
+  if (data.session) start(data.session); else authScreen();
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshIfNewer(); else if (saveTimer) push(); });
+  addEventListener("pagehide", () => { if (saveTimer) push(); });
+}
 
 // ---------- Utilitaires ----------
 const eur = n => (n || 0).toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 });
@@ -89,6 +181,9 @@ const PAGES = [
 function nav() {
   document.getElementById("nav").innerHTML = PAGES.map(p => `<a data-p="${p[0]}" class="${UI.page === p[0] ? "on" : ""}"><span>${p[1]}</span>${p[2]}</a>`).join("");
   document.getElementById("assocName").textContent = S.assoc;
+  const sf = document.getElementById("sideFoot");
+  sf.innerHTML = SB && USER ? `<small>${esc(USER.email)}</small><small id="syncState"></small><button class="btn sm sec" id="logout">Se déconnecter</button>` : `<small>Mode local : données enregistrées dans ce navigateur seulement. Exporte une sauvegarde (Paramètres).</small>`;
+  if (SB && USER) { document.getElementById("logout").onclick = logout; setSync(syncState); }
   document.getElementById("title").textContent = PAGES.find(p => p[0] === UI.page)[2];
   const fy = document.getElementById("fYear");
   fy.innerHTML = [...S.years].sort().map(y => `<option ${y === UI.year ? "selected" : ""}>${y}</option>`).join("");
@@ -263,7 +358,7 @@ function act() {
 function set() {
   return `<div class="card"><h2>Association</h2><div class="fg"><label>Nom<input id="sName" value="${esc(S.assoc)}"></label>
   <label>Ajouter une année<input id="sYear" type="number" placeholder="${Math.max(...S.years) + 1}"></label></div><div class="fa"><button class="btn" data-saveset>Enregistrer</button></div></div>
-  <div class="card"><h2>Sauvegarde</h2><p class="mute">Les données restent dans ce navigateur. Exporte régulièrement un fichier de sauvegarde (à ranger dans ton dépôt GitHub si tu veux).</p>
+  <div class="card"><h2>Sauvegarde</h2><p class="mute">${SB ? 'Tes données sont enregistrées en ligne dans ton compte.' : 'Mode local : les données restent dans ce navigateur.'} Exporte de temps en temps un fichier de sauvegarde et garde-le hors de GitHub.</p>
   <button class="btn" data-export>⬇ Exporter (JSON)</button> <label class="btn sec" style="display:inline-block">⬆ Importer<input type="file" accept=".json" data-import hidden></label>
   <button class="btn sec" data-demo>Charger l'exemple</button> <button class="btn red" data-reset>Tout effacer</button></div>`;
 }
@@ -405,4 +500,4 @@ function demo() {
   return d;
 }
 
-render();
+boot();
