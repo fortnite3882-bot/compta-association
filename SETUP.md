@@ -9,3 +9,6 @@
 7. Ouvre le site, clique **Créer mon compte**. Ensuite tu te connectes avec le même e-mail depuis n'importe quel appareil et tu retrouves tout.
 
 Sécurité : la clé « anon » est publique par conception. Ce sont les règles de `supabase.sql` (RLS) qui empêchent un utilisateur de lire les données d'un autre. Ne mets **jamais** la clé « service_role » dans le dépôt.
+
+## Pièces jointes des factures
+Dans Supabase > **SQL Editor** > **New query**, colle le contenu de `supabase-fichiers.sql` puis **Run** (une seule fois). Les fichiers sont privés : seul ton compte peut les ouvrir.

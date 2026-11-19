@@ -216,41 +216,87 @@ function emptyHelp() {
   <p><button class="btn" data-go="act">Créer une action</button> <button class="btn sec" data-demo>Charger des données d'exemple</button></p></div>`;
 }
 
+// ---------- Graphiques (palette validée : bleu = recettes, orange = dépenses) ----------
+const VIZ = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6"];
+const DONUT = [VIZ[2], VIZ[3], VIZ[4], VIZ[5], VIZ[6], VIZ[1], VIZ[0]]; // évite bleu/orange réservés recettes/dépenses
+const MOIS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"];
+const kfmt = n => Math.abs(n) >= 1000 ? (n / 1000).toLocaleString("fr-FR", { maximumFractionDigits: 1 }) + " k€" : Math.round(n).toLocaleString("fr-FR") + " €";
+function niceMax(v) { if (v <= 0) return 100; const p = Math.pow(10, Math.floor(Math.log10(v))), m = v / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; }
+function topRound(x, y, w, h, r) { // barre arrondie en haut, carrée à la base
+  if (h <= 0) return ""; r = Math.min(r, h, w / 2);
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+}
+function monthlyChart(y, a) {
+  const dep = Array(12).fill(0), rec = Array(12).fill(0);
+  depPaid(y, a).forEach(d => dep[+d.date.slice(5, 7) - 1] += d.amount);
+  recs(y, a).forEach(r => rec[+r.date.slice(5, 7) - 1] += r.amount);
+  const max = niceMax(Math.max(...dep, ...rec)), W = 640, H = 250, L = 54, B = 26, T = 12, ph = H - B - T, sw = (W - L - 8) / 12;
+  let s = `<svg viewBox="0 0 ${W} ${H}" class="svgc" role="img" aria-label="Dépenses et recettes par mois">`;
+  for (let i = 0; i <= 4; i++) {
+    const v = max * i / 4, yy = T + ph - ph * i / 4;
+    s += `<line x1="${L}" x2="${W - 8}" y1="${yy}" y2="${yy}" class="gl"/><text x="${L - 8}" y="${yy + 4}" text-anchor="end" class="ax">${kfmt(v)}</text>`;
+  }
+  for (let m = 0; m < 12; m++) {
+    const x0 = L + m * sw + (sw - 34) / 2, hr = ph * rec[m] / max, hd = ph * dep[m] / max;
+    s += `<path d="${topRound(x0, T + ph - hr, 16, hr, 4)}" fill="${VIZ[0]}"/><path d="${topRound(x0 + 18, T + ph - hd, 16, hd, 4)}" fill="${VIZ[1]}"/>`;
+    s += `<text x="${L + m * sw + sw / 2}" y="${H - 8}" text-anchor="middle" class="ax">${MOIS[m]}</text>`;
+    const tip = `<b>${MOIS[m]} ${y}</b><br><span class="sw" style="background:${VIZ[0]}"></span>Recettes : ${eur(rec[m])}<br><span class="sw" style="background:${VIZ[1]}"></span>Dépenses : ${eur(dep[m])}`;
+    s += `<rect x="${L + m * sw}" y="${T}" width="${sw}" height="${ph + B}" fill="transparent" data-tip='${esc(tip)}'/>`;
+  }
+  return s + `</svg>`;
+}
+function donutChart(y, a) {
+  const parts = CHARGES.map((g, i) => ({ name: g[1], v: sum(g[2].map(c => chargeReel(y, a, c[0]))), c: DONUT[i % DONUT.length] })).filter(p => p.v > 0);
+  const tot = sum(parts.map(p => p.v));
+  if (!tot) return `<p class="mute">Aucune dépense payée pour l'instant.</p>`;
+  const R = 62, C = 2 * Math.PI * R, gap = parts.length > 1 ? 2 : 0;
+  let off = 0, svg = `<svg viewBox="0 0 170 170" class="donut" role="img" aria-label="Répartition des dépenses"><g transform="rotate(-90 85 85)">`;
+  parts.forEach(p => {
+    const len = p.v / tot * C;
+    svg += `<circle cx="85" cy="85" r="${R}" fill="none" stroke="${p.c}" stroke-width="22" stroke-dasharray="${Math.max(0, len - gap)} ${C - Math.max(0, len - gap)}" stroke-dashoffset="${-off}" data-tip='${esc(`<b>${p.name}</b><br>${eur(p.v)} · ${pct(p.v, tot)} %`)}'/>`;
+    off += len;
+  });
+  svg += `</g><text x="85" y="82" text-anchor="middle" class="dn1">${kfmt(tot)}</text><text x="85" y="100" text-anchor="middle" class="ax">dépensé</text></svg>`;
+  return `<div class="donutwrap">${svg}<ul class="legend">${parts.map(p => `<li><span class="sw" style="background:${p.c}"></span><span>${esc(p.name.replace(/^\d+( à \d+)? - /, ""))}</span><b>${pct(p.v, tot)} %</b></li>`).join("")}</ul></div>`;
+}
+const legend2 = `<div class="legend row"><span><i class="sw" style="background:${VIZ[0]}"></i>Recettes encaissées</span><span><i class="sw" style="background:${VIZ[1]}"></i>Dépenses payées</span></div>`;
+
 function dash() {
   if (!S.actions.length && !S.depenses.length) return emptyHelp();
-  const { year: y, action: a } = UI, t = totals(y, a);
-  const resultat = t.prReel - t.chReel;
-  const kpi = (l, v, s, cls = "") => `<div class="card kpi"><small>${l}</small><b class="${cls}">${v}</b><span>${s}</span></div>`;
-  let h = `<div class="grid g4">
-    ${kpi("Dépenses payées (réel)", eur(t.chReel), `sur ${eur(t.chPrev)} prévus · ${pct(t.chReel, t.chPrev)} %`)}
-    ${kpi("Factures à payer", eur(t.due), `${depDue(y, a).length} facture(s) en attente`, t.due ? "neg" : "")}
-    ${kpi("Subventions conventionnées", eur(t.conv), `${convs(y, a).length} convention(s) ${y}`)}
-    ${kpi("Recettes encaissées", eur(t.prReel), `sur ${eur(t.prPrev)} prévus · ${pct(t.prReel, t.prPrev)} %`)}
-    ${kpi("Résultat réel", eur(resultat), "recettes − dépenses payées", resultat < 0 ? "neg" : "pos")}
-    ${kpi("Reste à encaisser", eur(Math.max(0, t.conv - sum(convs(y, a).map(c => convStats(c).verse)))), "conventions − versements")}
-  </div><div class="grid g2">`;
-  // par action
-  h += `<div class="card chart"><h2>Charges par action — prévu vs réel</h2>`;
+  const { year: y, action: a } = UI, t = totals(y, a), cs = convs(y, a);
+  const verse = sum(cs.map(c => convStats(c).verse)), resultat = t.prReel - t.chReel;
+  const kpi = (ico, l, v, s, b, cls = "") => `<div class="card kpi"><div class="kico">${ico}</div><small>${l}</small><b class="${cls}">${v}</b>${b || ""}<span>${s}</span></div>`;
+  let h = `<div class="hero"><div><h2>${esc(S.assoc)} · ${y}</h2><p class="mute">${a === "all" ? "Toutes les actions" : esc(actionName(a))}</p></div>
+    <div><button class="btn sec" data-new="rec">+ Recette</button> <button class="btn" data-new="dep">+ Facture</button></div></div>
+  <div class="grid g4">
+    ${kpi("🧾", "Dépenses payées", eur(t.chReel), t.chPrev ? `${pct(t.chReel, t.chPrev)} % du budget de ${eur(t.chPrev)}` : "Pas de budget saisi", t.chPrev ? bar(t.chReel, t.chPrev) : "")}
+    ${kpi("💶", "Recettes encaissées", eur(t.prReel), t.prPrev ? `${pct(t.prReel, t.prPrev)} % des ${eur(t.prPrev)} prévus` : "Pas de budget saisi", t.prPrev ? bar(t.prReel, t.prPrev, "ok") : "")}
+    ${kpi("📈", "Résultat réel", eur(resultat), "recettes − dépenses payées", "", resultat < 0 ? "neg" : "pos")}
+    ${kpi("📑", "Reste à encaisser", eur(Math.max(0, t.conv - verse)), `${eur(t.conv)} conventionnés · ${eur(verse)} versés`, t.conv ? bar(verse, t.conv, "ok") : "")}
+  </div>
+  ${t.due ? `<div class="hint">🕒 ${depDue(y, a).length} facture(s) à payer pour <b>${eur(t.due)}</b>.</div>` : ""}
+  <div class="grid g32"><div class="card"><h2>Dépenses et recettes par mois</h2>${legend2}${monthlyChart(y, a)}</div>
+  <div class="card"><h2>Où part l'argent ?</h2>${donutChart(y, a)}</div></div>`;
+
+  // cartes par action
   const acts = S.actions.filter(x => a === "all" || x.id === a);
-  h += acts.map(x => {
-    const p = sum(CHARGES.flatMap(g => g[2]).map(c => budgetPrev(y, x.id, c[0])));
-    const r = sum(depPaid(y, x.id).map(d => d.amount));
-    const m = Math.max(p, r, 1);
-    return `<div class="row"><div><span class="dot" style="background:${x.color}"></span>${esc(x.name)}</div>
-      <div><div class="tr"><i style="width:${pct(p, m)}%;background:#cbd0f5"></i></div><div class="tr" style="margin-top:4px"><i style="width:${pct(r, m)}%;background:${r > p && p ? "var(--bad)" : x.color}"></i></div></div>
-      <div class="num"><small class="mute">${eur(p)}</small><br><b>${eur(r)}</b></div></div>`;
-  }).join("") || `<p class="mute">Aucune action.</p>`;
-  h += `<small class="mute">Barre claire = prévisionnel · barre colorée = réel payé</small></div>`;
-  // par financeur
-  const cs = convs(y, a);
-  h += `<div class="card"><h2>Conventions par financeur (${y})</h2><div class="scroll"><table><tr><th>Financeur</th><th class="num">Accordé</th><th class="num">Versé</th><th class="num">Dépensé imputé</th><th>Consommation</th></tr>`;
+  h += `<h2 class="sec">Par action</h2><div class="grid g3">` + acts.map(x => {
+    const p = sum(CHARGES.flatMap(g => g[2]).map(c => budgetPrev(y, x.id, c[0]))), r = sum(depPaid(y, x.id).map(d => d.amount));
+    const cc = convs(y, x.id), acc = sum(cc.map(c => c.amount)), ver = sum(cc.map(c => convStats(c).verse));
+    return `<div class="card acard" style="border-top:4px solid ${x.color}"><b>${esc(x.name)}</b>
+      <div class="arow"><span>Dépensé</span><b>${eur(r)}</b></div>${p ? bar(r, p) : ""}<small class="mute">${p ? `${pct(r, p)} % de ${eur(p)} prévus` : "pas de budget saisi"}</small>
+      <div class="arow"><span>Subventions versées</span><b>${eur(ver)}</b></div>${acc ? bar(ver, acc, "ok") : ""}<small class="mute">${acc ? `${pct(ver, acc)} % de ${eur(acc)} accordés` : "aucune convention"}</small></div>`;
+  }).join("") + `</div>`;
+
+  // conventions + dernières factures
   const fins = [...new Set(cs.map(c => c.financeurId))];
-  h += fins.map(fid => {
-    const l = cs.filter(c => c.financeurId === fid), acc = sum(l.map(c => c.amount)), s = l.map(convStats);
-    const ver = sum(s.map(x => x.verse)), dep = sum(s.map(x => x.depense));
-    return `<tr><td><b>${esc(finName(fid))}</b></td><td class="num">${eur(acc)}</td><td class="num">${eur(ver)}</td><td class="num">${eur(dep)}</td><td style="min-width:110px">${bar(dep, acc)}</td></tr>`;
-  }).join("") || `<tr><td colspan="5" class="empty">Aucune convention pour ${y}.</td></tr>`;
-  h += `</table></div></div></div>`;
+  h += `<div class="grid g2"><div class="card"><h2>Conventions par financeur</h2>` + (fins.map(fid => {
+    const l = cs.filter(c => c.financeurId === fid), acc = sum(l.map(c => c.amount)), s = l.map(convStats), ver = sum(s.map(x => x.verse)), dp = sum(s.map(x => x.depense));
+    return `<div class="frow"><div class="arow"><b>${esc(finName(fid))}</b><span>${eur(acc)}</span></div>${bar(dp, acc)}<small class="mute">Versé ${eur(ver)} · dépensé ${eur(dp)} · reste à dépenser ${eur(acc - dp)}</small></div>`;
+  }).join("") || `<p class="mute">Aucune convention pour ${y}.</p>`) + `</div>`;
+  const last = S.depenses.filter(d => inScope(d, y, a)).sort((p, q) => q.date.localeCompare(p.date)).slice(0, 6);
+  h += `<div class="card"><h2>Dernières factures</h2>` + (last.map(d => `<div class="lrow"><div><b>${esc(d.fournisseur)}</b><small class="mute">${fdate(d.date)} · ${esc(actionName(d.actionId))}${d.files?.length ? " · 📎" + d.files.length : ""}</small></div><b>${eur(d.amount)}</b></div>`).join("") || `<p class="mute">Aucune facture.</p>`) + `</div></div>`;
+
   // alertes
   const al = [];
   S.actions.filter(x => a === "all" || x.id === a).forEach(x => {
@@ -258,43 +304,71 @@ function dash() {
     if (p && r > p) al.push(`⚠️ <b>${esc(x.name)}</b> : dépenses (${eur(r)}) au-dessus du budget (${eur(p)}).`);
   });
   cs.forEach(c => { const s = convStats(c); if (s.depense > c.amount) al.push(`⚠️ Convention <b>${esc(finName(c.financeurId))}</b> / ${esc(actionName(c.actionId))} : dépensé imputé supérieur au montant accordé.`); });
-  const sansImput = depPaid(y, a).filter(d => !d.convId).length;
+  const sansImput = depPaid(y, a).filter(d => !d.convId).length, sansPJ = depPaid(y, a).filter(d => !d.files?.length).length;
   if (sansImput) al.push(`ℹ️ ${sansImput} facture(s) payée(s) pas encore imputée(s) à une convention.`);
-  if (al.length) h += `<div class="card"><h2>À surveiller</h2>${al.map(x => `<p style="margin:6px 0">${x}</p>`).join("")}</div>`;
+  if (sansPJ) al.push(`📎 ${sansPJ} facture(s) payée(s) sans justificatif joint.`);
+  if (al.length) h += `<div class="card"><h2>À surveiller</h2>${al.map(x => `<p class="alr">${x}</p>`).join("")}</div>`;
   return h;
 }
 
 function budget() {
-  const { year: y, action: a } = UI, all = a === "all";
-  const row = (cat, side) => {
-    const p = budgetPrev(y, a, cat);
-    const r = side === "c" ? chargeReel(y, a, cat) : produitReel(y, a, cat);
-    const ecart = side === "c" ? p - r : r - p;
-    const conv = side === "p" && SUBV_CATS.some(c => c[0] === cat) ? produitConv(y, a, cat) : null;
-    return `<tr><td>${esc(catLabel[cat])}</td>
-      <td class="num">${all ? eur(p) : `<input class="cell" data-b="${cat}" value="${p || ""}" placeholder="0" inputmode="decimal">`}</td>
-      ${side === "p" ? `<td class="num mute">${conv === null ? "" : eur(conv)}</td>` : ""}
-      <td class="num">${eur(r)}</td><td class="num ${ecart < 0 ? "neg" : "mute"}">${p || r ? eur(ecart) : ""}</td></tr>`;
-  };
-  const tbl = (groups, side, title) => {
-    let h = `<div class="card"><h2>${title}</h2><div class="scroll"><table><tr><th>Poste</th><th class="num">Prévisionnel</th>${side === "p" ? `<th class="num">Conventionné</th>` : ""}<th class="num">Réel</th><th class="num">${side === "c" ? "Reste" : "Écart"}</th></tr>`;
-    let tp = 0, tr = 0;
-    groups.forEach(g => {
-      const p = sum(g[2].map(c => budgetPrev(y, a, c[0]))), r = sum(g[2].map(c => side === "c" ? chargeReel(y, a, c[0]) : produitReel(y, a, c[0])));
-      tp += p; tr += r;
-      h += `<tr class="grp"><td>${esc(g[1])}</td><td class="num">${eur(p)}</td>${side === "p" ? "<td></td>" : ""}<td class="num">${eur(r)}</td><td></td></tr>` + g[2].map(c => row(c[0], side)).join("");
+  UI.btab ??= "c"; UI.collapsed ??= {}; UI.hideEmpty ??= false;
+  const { year: y, action: a } = UI, all = a === "all", side = UI.btab, groups = side === "c" ? CHARGES : PRODUITS, t = totals(y, a);
+  const sc = (ico, l, v, sub, b) => `<div class="card kpi"><div class="kico">${ico}</div><small>${l}</small><b>${v}</b>${b || ""}<span>${sub}</span></div>`;
+  let h = (all ? `<div class="hint">Pour saisir le prévisionnel, choisis une <b>action</b> en haut à droite. Ici : total de toutes les actions (lecture seule).</div>` : "")
+    + `<div class="grid g4">
+    ${sc("🧾", "Charges", eur(t.chReel), `réalisé sur ${eur(t.chPrev)} prévus`, t.chPrev ? bar(t.chReel, t.chPrev) : "")}
+    ${sc("💶", "Produits", eur(t.prReel), `encaissé sur ${eur(t.prPrev)} prévus`, t.prPrev ? bar(t.prReel, t.prPrev, "ok") : "")}
+    ${sc("⚖️", "Équilibre prévisionnel", `<span class="${t.prPrev - t.chPrev < 0 ? "neg" : "pos"}">${eur(t.prPrev - t.chPrev)}</span>`, t.prPrev === t.chPrev ? "budget équilibré" : t.prPrev > t.chPrev ? "produits > charges" : "charges > produits : budget déséquilibré")}
+    ${sc("📈", "Résultat réel", `<span class="${t.prReel - t.chReel < 0 ? "neg" : "pos"}">${eur(t.prReel - t.chReel)}</span>`, "recettes − dépenses payées")}
+  </div>
+  <div class="bar-top"><div class="seg"><button data-btab="c" class="${side === "c" ? "on" : ""}">Charges</button><button data-btab="p" class="${side === "p" ? "on" : ""}">Produits</button></div>
+    <label class="chk"><input type="checkbox" data-hideempty ${UI.hideEmpty ? "checked" : ""}> Masquer les postes vides</label><span class="sp"></span>
+    <button class="btn sec sm" data-expand="1">Tout déplier</button><button class="btn sec sm" data-expand="0">Tout replier</button></div>`;
+  const isP = side === "p", ncol = isP ? 6 : 5;
+  h += `<div class="card"><div class="scroll"><table class="btable"><tr><th>Poste</th><th class="num">Prévisionnel</th>${isP ? `<th class="num">Conventionné</th>` : ""}<th class="num">${isP ? "Encaissé" : "Réalisé"}</th><th class="num">Reste</th><th style="width:150px">Réalisation</th></tr>`;
+  let tp = 0, tr = 0;
+  groups.forEach(g => {
+    const rows = g[2].map(c => ({ c: c[0], p: budgetPrev(y, a, c[0]), r: isP ? produitReel(y, a, c[0]) : chargeReel(y, a, c[0]) }));
+    const gp = sum(rows.map(x => x.p)), gr = sum(rows.map(x => x.r)); tp += gp; tr += gr;
+    if (UI.hideEmpty && !gp && !gr) return;
+    const open = !UI.collapsed[g[0] + side];
+    h += `<tr class="grp" data-g="${g[0] + side}"><td><span class="chev">${open ? "▾" : "▸"}</span> ${esc(g[1])}</td><td class="num">${eur(gp)}</td>${isP ? "<td></td>" : ""}<td class="num">${eur(gr)}</td><td class="num ${!isP && gp - gr < 0 ? "neg" : ""}">${gp || gr ? eur(gp - gr) : ""}</td><td>${gp ? bar(gr, gp, isP ? "ok" : "") : ""}</td></tr>`;
+    if (!open) return;
+    rows.forEach(x => {
+      if (UI.hideEmpty && !x.p && !x.r) return;
+      const conv = isP && SUBV_CATS.some(c => c[0] === x.c) ? produitConv(y, a, x.c) : null, reste = x.p - x.r;
+      h += `<tr><td class="ind">${esc(catLabel[x.c])}</td>
+        <td class="num">${all ? eur(x.p) : `<input class="cell" data-b="${x.c}" value="${x.p || ""}" placeholder="0" inputmode="decimal" aria-label="Prévisionnel ${esc(catLabel[x.c])}">`}</td>
+        ${isP ? `<td class="num mute">${conv === null ? "" : eur(conv)}</td>` : ""}
+        <td class="num">${x.r ? eur(x.r) : '<span class="mute">—</span>'}</td>
+        <td class="num ${reste < 0 && !isP ? "neg" : reste < 0 ? "pos" : "mute"}">${x.p || x.r ? eur(reste) : ""}</td>
+        <td>${x.p ? `<div class="pc">${bar(x.r, x.p, isP ? "ok" : "")}<small>${pct(x.r, x.p)} %</small></div>` : x.r ? `<small class="neg">hors budget</small>` : ""}</td></tr>`;
     });
-    return h + `<tr class="tot"><td>TOTAL</td><td class="num">${eur(tp)}</td>${side === "p" ? "<td></td>" : ""}<td class="num">${eur(tr)}</td><td class="num">${eur(side === "c" ? tp - tr : tr - tp)}</td></tr></table></div></div>`;
-  };
-  return (all ? `<div class="hint">Pour saisir le prévisionnel, choisis une <b>action</b> en haut à droite. Ici : total de toutes les actions.</div>` : "")
-    + `<div class="grid g2">${tbl(CHARGES, "c", "Charges")}${tbl(PRODUITS, "p", "Produits")}</div>`;
+  });
+  h += `<tr class="tot"><td>TOTAL ${isP ? "PRODUITS" : "CHARGES"}</td><td class="num">${eur(tp)}</td>${isP ? "<td></td>" : ""}<td class="num">${eur(tr)}</td><td class="num">${eur(tp - tr)}</td><td>${tp ? bar(tr, tp, isP ? "ok" : "") : ""}</td></tr></table></div></div>`;
+  return h;
 }
 function bindBudget() {
-  document.querySelectorAll("input[data-b]").forEach(i => i.onchange = () => {
-    const { year, action } = UI, cat = i.dataset.b;
-    let b = S.budget.find(x => x.year === year && x.actionId === action && x.cat === cat);
-    if (!b) { b = { id: uid(), year, actionId: action, cat, prev: 0 }; S.budget.push(b); }
-    b.prev = num(i.value); save(); render();
+  const v = document.getElementById("view");
+  v.querySelectorAll("[data-btab]").forEach(b => b.onclick = () => { UI.btab = b.dataset.btab; render(); });
+  const he = v.querySelector("[data-hideempty]"); if (he) he.onchange = () => { UI.hideEmpty = he.checked; render(); };
+  v.querySelectorAll("[data-g]").forEach(r => r.onclick = () => { UI.collapsed[r.dataset.g] = !UI.collapsed[r.dataset.g]; render(); });
+  v.querySelectorAll("[data-expand]").forEach(b => b.onclick = () => {
+    UI.collapsed = {}; if (b.dataset.expand === "0") (UI.btab === "c" ? CHARGES : PRODUITS).forEach(g => UI.collapsed[g[0] + UI.btab] = true); render();
+  });
+  v.querySelectorAll("input[data-b]").forEach(i => {
+    i.onfocus = () => i.select();
+    i.onchange = () => {
+      const { year, action } = UI, cat = i.dataset.b;
+      let b = S.budget.find(x => x.year === year && x.actionId === action && x.cat === cat);
+      if (!b) { b = { id: uid(), year, actionId: action, cat, prev: 0 }; S.budget.push(b); }
+      b.prev = num(i.value); save();
+      setTimeout(() => { // garde le curseur sur la case suivante après le recalcul
+        const nxt = document.activeElement?.dataset?.b; render();
+        if (nxt) { const n = document.querySelector(`input[data-b="${nxt}"]`); if (n) { n.focus(); n.select(); } }
+      }, 0);
+    };
   });
 }
 
@@ -314,7 +388,7 @@ function dep() {
     <select data-fstat><option value="">Payées + à payer</option><option value="p" ${UI.fstat === "p" ? "selected" : ""}>Payées</option><option value="n" ${UI.fstat === "n" ? "selected" : ""}>À payer</option></select>
     <span class="sp"></span><button class="btn sec" data-csv="dep">⬇ CSV</button><button class="btn" data-new="dep">+ Facture</button></div>
   <div class="card"><div class="scroll"><table><tr><th>Date</th><th>Payé à</th><th>N° facture</th><th>Libellé</th><th>Catégorie</th><th>Action</th><th>Financeur imputé</th><th class="num">Montant</th><th></th></tr>
-  ${l.map(d => { const cv = byId(S.conventions, d.convId); return `<tr><td>${fdate(d.date)}</td><td><b>${esc(d.fournisseur)}</b></td><td>${esc(d.ref)}</td><td>${esc(d.label)}</td><td><small>${esc(catLabel[d.cat] || "")}</small></td>
+  ${l.map(d => { const cv = byId(S.conventions, d.convId); return `<tr><td>${fdate(d.date)}</td><td><b>${esc(d.fournisseur)}</b></td><td>${esc(d.ref)}</td><td>${esc(d.label)} ${d.files?.length ? `<button class="btn sm sec" data-files="${d.id}" title="Justificatifs">📎 ${d.files.length}</button>` : ""}</td><td><small>${esc(catLabel[d.cat] || "")}</small></td>
     <td><span class="dot" style="background:${actionColor(d.actionId)}"></span>${esc(actionName(d.actionId))}</td><td>${cv ? esc(finName(cv.financeurId)) : '<span class="mute">—</span>'}</td>
     <td class="num"><b>${eur(d.amount)}</b> ${d.paid ? "" : '<span class="pill warn">à payer</span>'}</td>
     <td class="num"><button class="btn sm sec" data-edit="dep:${d.id}">✎</button> <button class="btn sm red" data-del="dep:${d.id}">🗑</button></td></tr>`; }).join("") || `<tr><td colspan="9" class="empty">Aucune facture.</td></tr>`}
@@ -363,6 +437,36 @@ function set() {
   <button class="btn sec" data-demo>Charger l'exemple</button> <button class="btn red" data-reset>Tout effacer</button></div>`;
 }
 
+// ---------- Pièces jointes (Supabase Storage si connecté, sinon IndexedDB local) ----------
+const BUCKET = "justificatifs", MAX_FILE = 10 * 1024 * 1024;
+const idb = () => new Promise((res, rej) => { const r = indexedDB.open("compta-files", 1); r.onupgradeneeded = () => r.result.createObjectStore("f"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+async function idbDo(mode, fn) { const db = await idb(); return new Promise((res, rej) => { const t = db.transaction("f", mode), q = fn(t.objectStore("f")); t.oncomplete = () => res(q && q.result); t.onerror = () => rej(t.error); }); }
+const online = () => SB && USER;
+async function fileUpload(file, depId) {
+  const path = `${online() ? USER.id : "local"}/${depId}/${uid()}-${file.name.replace(/[^\w.\-]+/g, "_")}`;
+  if (online()) { const { error } = await SB.storage.from(BUCKET).upload(path, file, { contentType: file.type || undefined }); if (error) throw error; }
+  else await idbDo("readwrite", st => st.put(file, path));
+  return { id: uid(), name: file.name, size: file.size, type: file.type, path };
+}
+async function fileUrl(f) {
+  if (online()) { const { data, error } = await SB.storage.from(BUCKET).createSignedUrl(f.path, 3600); if (error) throw error; return data.signedUrl; }
+  const b = await idbDo("readonly", st => st.get(f.path)); if (!b) throw new Error("Fichier introuvable sur cet appareil."); return URL.createObjectURL(b);
+}
+async function fileRemove(f) {
+  try { if (online()) await SB.storage.from(BUCKET).remove([f.path]); else await idbDo("readwrite", st => st.delete(f.path)); } catch (e) { console.error(e); }
+}
+const fsize = n => n > 1048576 ? (n / 1048576).toFixed(1) + " Mo" : Math.max(1, Math.round(n / 1024)) + " Ko";
+function openFiles(id) {
+  const d = byId(S.depenses, id), dlg = document.getElementById("dlg"), form = document.getElementById("dlgForm");
+  form.innerHTML = `<h2>Justificatifs — ${esc(d.fournisseur)}</h2>${(d.files || []).map(f => `<div class="lrow"><div><b>${esc(f.name)}</b><small class="mute">${fsize(f.size)}</small></div><button type="button" class="btn sm" data-open="${f.id}">Ouvrir</button></div>`).join("") || '<p class="mute">Aucun fichier.</p>'}<div class="fa"><button type="button" class="btn sec" data-close>Fermer</button></div>`;
+  form.querySelector("[data-close]").onclick = () => dlg.close();
+  form.onsubmit = e => e.preventDefault();
+  form.querySelectorAll("[data-open]").forEach(b => b.onclick = async () => {
+    const w = window.open("", "_blank"); try { const u = await fileUrl(d.files.find(x => x.id === b.dataset.open)); if (w) w.location = u; else location.href = u; } catch (e) { if (w) w.close(); alert("Impossible d'ouvrir le fichier : " + e.message); }
+  });
+  dlg.showModal();
+}
+
 // ---------- Formulaires ----------
 const opt = (arr, sel, lab = x => x.name) => arr.map(x => `<option value="${x.id}" ${x.id === sel ? "selected" : ""}>${esc(lab(x))}</option>`).join("");
 const catOpt = (groups, sel) => groups.map(g => `<optgroup label="${esc(g[1])}">${g[2].map(c => `<option value="${c[0]}" ${c[0] === sel ? "selected" : ""}>${esc(c[1])}</option>`).join("")}</optgroup>`).join("");
@@ -378,6 +482,8 @@ const FORMS = {
     <label>Catégorie<select name="cat">${catOpt(CHARGES, o?.cat)}</select></label>
     <label>Action<select name="actionId">${opt(S.actions, o?.actionId || (UI.action !== "all" ? UI.action : ""))}</select></label>
     <label class="full">Imputée sur la convention<select name="convId">${convOpt(o?.convId)}</select></label>
+    <label class="full">Justificatifs (facture PDF, photo…) — 10 Mo max par fichier<input type="file" name="files" multiple accept=".pdf,image/*,.doc,.docx,.xls,.xlsx"></label>
+    ${(o?.files || []).length ? `<div class="full filelist"><small class="mute">Fichiers déjà joints (coche pour retirer) :</small>${o.files.map(f => `<label class="chk"><input type="checkbox" name="rmfile" value="${f.id}"> ${esc(f.name)} <small class="mute">${fsize(f.size)}</small></label>`).join("")}</div>` : ""}
     <label>Statut<select name="paid"><option value="1" ${o?.paid !== false ? "selected" : ""}>Payée</option><option value="0" ${o?.paid === false ? "selected" : ""}>À payer</option></select></label>` }),
   rec: o => ({ title: o ? "Modifier la recette" : "Nouvelle recette / versement", html: `
     <label>Date<input type="date" name="date" required value="${o?.date || new Date().toISOString().slice(0, 10)}"></label>
@@ -416,15 +522,27 @@ function openForm(kind, id) {
   form.querySelector("[data-close]").onclick = () => dlg.close();
   const fs = form.elements.financeurId, cs = form.elements.cat;
   if (kind === "rec" && fs && cs) fs.onchange = () => { const fo = byId(S.financeurs, fs.value); if (fo) cs.value = fo.cat; };
-  form.onsubmit = ev => {
+  form.onsubmit = async ev => {
     ev.preventDefault();
-    const d = Object.fromEntries(new FormData(form));
+    const fd = new FormData(form), d = Object.fromEntries(fd), picked = [...(form.elements.files?.files || [])], rm = fd.getAll("rmfile");
+    delete d.files; delete d.rmfile;
     if ("amount" in d) d.amount = num(d.amount);
     if ("paid" in d) d.paid = d.paid === "1";
     if ("year" in d) d.year = +d.year;
     if (kind === "rec" && d.convId && !d.financeurId) d.financeurId = byId(S.conventions, d.convId)?.financeurId || "";
-    if (o) Object.assign(o, d); else S[COLL[kind]].push(Object.assign({ id: uid() }, d));
+    let r = o; if (o) Object.assign(o, d); else { r = Object.assign({ id: uid() }, d); S[COLL[kind]].push(r); }
+    const errs = [];
+    if (kind === "dep") {
+      const btn = form.querySelector("button:not(.sec)"); btn.disabled = true; btn.textContent = picked.length ? "Envoi…" : "…";
+      r.files = r.files || [];
+      for (const id of rm) { const f = r.files.find(x => x.id === id); if (f) { await fileRemove(f); r.files = r.files.filter(x => x.id !== id); } }
+      for (const f of picked) {
+        if (f.size > MAX_FILE) { errs.push(`${f.name} : trop gros (10 Mo max)`); continue; }
+        try { r.files.push(await fileUpload(f, r.id)); } catch (e) { errs.push(`${f.name} : ${e.message}`); }
+      }
+    }
     save(); dlg.close(); render();
+    if (errs.length) alert("Certains fichiers n'ont pas été envoyés :\n" + errs.join("\n") + (online() ? "\n\nAs-tu lancé le fichier supabase-fichiers.sql dans Supabase ?" : ""));
   };
   dlg.showModal();
 }
@@ -448,10 +566,12 @@ function bindCommon() {
   v.querySelectorAll("[data-del]").forEach(b => b.onclick = () => {
     const [k, i] = b.dataset.del.split(":");
     if (!confirm("Supprimer cet élément ?")) return;
+    if (k === "dep") (byId(S.depenses, i)?.files || []).forEach(fileRemove);
     S[COLL[k]] = S[COLL[k]].filter(x => x.id !== i);
     if (k === "conv") { S.depenses.forEach(d => d.convId === i && (d.convId = "")); S.recettes.forEach(r => r.convId === i && (r.convId = "")); }
     save(); render();
   });
+  v.querySelectorAll("[data-files]").forEach(b => b.onclick = () => openFiles(b.dataset.files));
   v.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { UI.page = b.dataset.go; render(); });
   v.querySelectorAll("[data-csv]").forEach(b => b.onclick = () => csv(b.dataset.csv));
   v.querySelectorAll("[data-demo]").forEach(b => b.onclick = () => { if (!S.depenses.length || confirm("Remplacer les données par l'exemple ?")) { S = demo(); save(); UI.year = S.years.includes(thisYear) ? thisYear : S.years[0]; UI.page = "dash"; render(); } });
@@ -500,4 +620,12 @@ function demo() {
   return d;
 }
 
+// infobulle des graphiques
+const tipEl = document.createElement("div"); tipEl.id = "tip"; document.body.appendChild(tipEl);
+document.addEventListener("mousemove", e => {
+  const t = e.target.closest && e.target.closest("[data-tip]");
+  if (!t) { tipEl.style.display = "none"; return; }
+  tipEl.innerHTML = t.dataset.tip; tipEl.style.display = "block";
+  tipEl.style.left = Math.min(e.clientX + 14, innerWidth - tipEl.offsetWidth - 8) + "px"; tipEl.style.top = (e.clientY + 14) + "px";
+});
 boot();
