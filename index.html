@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Compta Asso — Suivi budgétaire & trésorerie</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <div class="brand"><span class="logo">€</span><div><b id="assocName">Mon association</b><small>Suivi budgétaire</small></div></div>
+    <nav id="nav"></nav>
+    <div class="side-foot">
+      <small>Données enregistrées dans ce navigateur. Pense à exporter une sauvegarde (Paramètres).</small>
+    </div>
+  </aside>
+  <main>
+    <header id="top">
+      <h1 id="title"></h1>
+      <div class="filters">
+        <label>Année <select id="fYear"></select></label>
+        <label>Action <select id="fAction"></select></label>
+      </div>
+    </header>
+    <section id="view"></section>
+  </main>
+</div>
+<dialog id="dlg"><form method="dialog" id="dlgForm"></form></dialog>
+<script src="app.js"></script>
+</body>
+</html>
