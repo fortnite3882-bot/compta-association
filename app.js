@@ -175,8 +175,8 @@ function totals(year, action) {
 
 // ---------- Navigation ----------
 const PAGES = [
-  ["dash", "📊", "Tableau de bord"], ["budget", "🧮", "Budget prév. / réel"], ["dep", "🧾", "Factures payées"],
-  ["rec", "💶", "Recettes"], ["conv", "📑", "Conventions"], ["fin", "🏛️", "Financeurs"], ["act", "🎯", "Actions"], ["set", "⚙️", "Paramètres"],
+  ["dash", "📊", "Tableau de bord"], ["budget", "🧮", "Budget prév. / réel"], ["dep", "🧾", "Factures"],
+  ["rec", "💶", "Recettes"], ["conv", "📑", "Conventions"], ["set", "⚙️", "Réglages"],
 ];
 function nav() {
   document.getElementById("nav").innerHTML = PAGES.map(p => `<a data-p="${p[0]}" class="${UI.page === p[0] ? "on" : ""}"><span>${p[1]}</span>${p[2]}</a>`).join("");
@@ -190,7 +190,7 @@ function nav() {
   const fa = document.getElementById("fAction");
   fa.innerHTML = `<option value="all">Toutes les actions</option>` + S.actions.map(a => `<option value="${a.id}" ${a.id === UI.action ? "selected" : ""}>${esc(a.name)}</option>`).join("");
 }
-document.getElementById("nav").onclick = e => { const a = e.target.closest("a"); if (a) { UI.page = a.dataset.p; render(); } };
+document.getElementById("nav").onclick = e => { const a = e.target.closest("a"); if (a) { UI.page = a.dataset.p; UI.fq = true; render(); } };
 document.getElementById("fYear").onchange = e => { UI.year = +e.target.value; render(); };
 document.getElementById("fAction").onchange = e => { UI.action = e.target.value; render(); };
 
@@ -213,7 +213,7 @@ function bar(v, max, cls) {
 }
 function emptyHelp() {
   return `<div class="card empty"><h2>Bienvenue 👋</h2><p>Commence par créer tes <b>actions</b> (projets) et tes <b>financeurs</b>, puis saisis le budget, les conventions et les factures.</p>
-  <p><button class="btn" data-go="act">Créer une action</button> <button class="btn sec" data-demo>Charger des données d'exemple</button></p></div>`;
+  <p><button class="btn" data-go="set">Créer une action</button> <button class="btn sec" data-demo>Charger des données d'exemple</button></p></div>`;
 }
 
 // ---------- Graphiques (palette validée : bleu = recettes, orange = dépenses) ----------
@@ -267,7 +267,7 @@ function dash() {
   const verse = sum(cs.map(c => convStats(c).verse)), resultat = t.prReel - t.chReel;
   const kpi = (ico, l, v, s, b, cls = "") => `<div class="card kpi"><div class="kico">${ico}</div><small>${l}</small><b class="${cls}">${v}</b>${b || ""}<span>${s}</span></div>`;
   let h = `<div class="hero"><div><h2>${esc(S.assoc)} · ${y}</h2><p class="mute">${a === "all" ? "Toutes les actions" : esc(actionName(a))}</p></div>
-    <div><button class="btn sec" data-new="rec">+ Recette</button> <button class="btn" data-new="dep">+ Facture</button></div></div>
+    <div><button class="btn sec" data-qgo="rec">+ Recette</button> <button class="btn" data-qgo="dep">+ Facture</button></div></div>
   <div class="grid g4">
     ${kpi("🧾", "Dépenses payées", eur(t.chReel), t.chPrev ? `${pct(t.chReel, t.chPrev)} % du budget de ${eur(t.chPrev)}` : "Pas de budget saisi", t.chPrev ? bar(t.chReel, t.chPrev) : "")}
     ${kpi("💶", "Recettes encaissées", eur(t.prReel), t.prPrev ? `${pct(t.prReel, t.prPrev)} % des ${eur(t.prPrev)} prévus` : "Pas de budget saisi", t.prPrev ? bar(t.prReel, t.prPrev, "ok") : "")}
@@ -381,16 +381,16 @@ function dep() {
   if (UI.fstat) l = l.filter(d => (d.paid ? "p" : "n") === UI.fstat);
   l.sort((x, z) => z.date.localeCompare(x.date));
   const paid = sum(l.filter(d => d.paid).map(d => d.amount)), due = sum(l.filter(d => !d.paid).map(d => d.amount));
-  return `<div class="bar-top">
+  return qaDep() + `<div class="bar-top">
     <input placeholder="🔍 Rechercher fournisseur, libellé, n°…" data-q value="${esc(UI.q)}">
     <select data-fcat><option value="">Toutes catégories</option>${CHARGES.flatMap(g => g[2]).map(c => `<option value="${c[0]}" ${UI.fcat === c[0] ? "selected" : ""}>${esc(c[1])}</option>`).join("")}</select>
     <select data-ffin><option value="">Tous financeurs</option>${S.financeurs.map(f => `<option value="${f.id}" ${UI.ffin === f.id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select>
     <select data-fstat><option value="">Payées + à payer</option><option value="p" ${UI.fstat === "p" ? "selected" : ""}>Payées</option><option value="n" ${UI.fstat === "n" ? "selected" : ""}>À payer</option></select>
-    <span class="sp"></span><button class="btn sec" data-csv="dep">⬇ CSV</button><button class="btn" data-new="dep">+ Facture</button></div>
+    <span class="sp"></span><button class="btn sec" data-csv="dep">⬇ CSV</button></div>
   <div class="card"><div class="scroll"><table><tr><th>Date</th><th>Payé à</th><th>N° facture</th><th>Libellé</th><th>Catégorie</th><th>Action</th><th>Financeur imputé</th><th class="num">Montant</th><th></th></tr>
   ${l.map(d => { const cv = byId(S.conventions, d.convId); return `<tr><td>${fdate(d.date)}</td><td><b>${esc(d.fournisseur)}</b></td><td>${esc(d.ref)}</td><td>${esc(d.label)} ${d.files?.length ? `<button class="btn sm sec" data-files="${d.id}" title="Justificatifs">📎 ${d.files.length}</button>` : ""}</td><td><small>${esc(catLabel[d.cat] || "")}</small></td>
     <td><span class="dot" style="background:${actionColor(d.actionId)}"></span>${esc(actionName(d.actionId))}</td><td>${cv ? esc(finName(cv.financeurId)) : '<span class="mute">—</span>'}</td>
-    <td class="num"><b>${eur(d.amount)}</b> ${d.paid ? "" : '<span class="pill warn">à payer</span>'}</td>
+    <td class="num"><b>${eur(d.amount)}</b> ${d.paid ? "" : `<button class="pill warn" data-pay="${d.id}" title="Cliquer pour marquer comme payée">à payer · ✓ payée ?</button>`}</td>
     <td class="num"><button class="btn sm sec" data-edit="dep:${d.id}">✎</button> <button class="btn sm red" data-del="dep:${d.id}">🗑</button></td></tr>`; }).join("") || `<tr><td colspan="9" class="empty">Aucune facture.</td></tr>`}
   <tr class="tot"><td colspan="7">Total payé (${l.filter(d => d.paid).length}) ${due ? `· à payer ${eur(due)}` : ""}</td><td class="num">${eur(paid)}</td><td></td></tr></table></div></div>`;
 }
@@ -398,7 +398,7 @@ function dep() {
 function rec() {
   const { year: y, action: a } = UI;
   const l = recs(y, a).sort((x, z) => z.date.localeCompare(x.date));
-  return `<div class="bar-top"><span class="sp"></span><button class="btn sec" data-csv="rec">⬇ CSV</button><button class="btn" data-new="rec">+ Recette / versement</button></div>
+  return qaRec() + `<div class="bar-top"><span class="sp"></span><button class="btn sec" data-csv="rec">⬇ CSV</button></div>
   <div class="card"><div class="scroll"><table><tr><th>Date</th><th>Origine</th><th>Libellé</th><th>Catégorie</th><th>Action</th><th>Convention</th><th class="num">Montant</th><th></th></tr>
   ${l.map(r => { const cv = byId(S.conventions, r.convId); return `<tr><td>${fdate(r.date)}</td><td><b>${esc(r.financeurId ? finName(r.financeurId) : r.origine || "")}</b></td><td>${esc(r.label)}</td><td><small>${esc(catLabel[r.cat] || "")}</small></td>
     <td><span class="dot" style="background:${actionColor(r.actionId)}"></span>${esc(actionName(r.actionId))}</td><td>${cv ? esc(cv.ref || "oui") : '<span class="mute">—</span>'}</td><td class="num"><b>${eur(r.amount)}</b></td>
@@ -430,11 +430,126 @@ function act() {
   <td class="num"><button class="btn sm sec" data-edit="act:${x.id}">✎</button> <button class="btn sm red" data-del="act:${x.id}">🗑</button></td></tr>`).join("") || `<tr><td colspan="3" class="empty">Aucune action.</td></tr>`}</table></div>`;
 }
 function set() {
-  return `<div class="card"><h2>Association</h2><div class="fg"><label>Nom<input id="sName" value="${esc(S.assoc)}"></label>
+  return `<h2 class="sec">🎯 Actions (projets)</h2>${act()}<h2 class="sec">🏛️ Financeurs</h2>${fin()}<h2 class="sec">⚙️ Association & sauvegarde</h2>
+  <div class="card"><h2>Association</h2><div class="fg"><label>Nom<input id="sName" value="${esc(S.assoc)}"></label>
   <label>Ajouter une année<input id="sYear" type="number" placeholder="${Math.max(...S.years) + 1}"></label></div><div class="fa"><button class="btn" data-saveset>Enregistrer</button></div></div>
   <div class="card"><h2>Sauvegarde</h2><p class="mute">${SB ? 'Tes données sont enregistrées en ligne dans ton compte.' : 'Mode local : les données restent dans ce navigateur.'} Exporte de temps en temps un fichier de sauvegarde et garde-le hors de GitHub.</p>
   <button class="btn" data-export>⬇ Exporter (JSON)</button> <label class="btn sec" style="display:inline-block">⬆ Importer<input type="file" accept=".json" data-import hidden></label>
   <button class="btn sec" data-demo>Charger l'exemple</button> <button class="btn red" data-reset>Tout effacer</button></div>`;
+}
+
+// ---------- Saisie rapide ----------
+const NEW = "__new__";
+const actOpts = sel => opt(S.actions, sel) + `<option value="${NEW}">➕ Nouvelle action…</option>`;
+const finOpts = sel => opt(S.financeurs, sel) + `<option value="${NEW}">➕ Nouveau financeur…</option>`;
+function guessType(n) {
+  n = n.toLowerCase();
+  const m = [[/r[ée]gion/, "p-reg"], [/d[ée]partement|conseil d[ée]p/, "p-dep"], [/commune|mairie|ville/, "p-com"], [/caf|msa|cpam|s[ée]curit[ée] sociale/, "p-caf"], [/europ|fse|feder|feader|leader/, "p-eu"], [/asp\b|emploi|p[ôo]le emploi/, "p-asp"], [/[ée]tat|pr[ée]fecture|deets|ddets|dreets|minist|ddcs|ars\b|cget/, "p-etat"], [/epci|agglo|communaut|intercommunal|cinor|cirest|casud|cive/, "p-epci"]];
+  return (m.find(x => x[0].test(n)) || [0, "p-pub"])[1];
+}
+function newAction(name) { const x = { id: uid(), name, desc: "", color: COLORS[S.actions.length % COLORS.length] }; S.actions.push(x); save(); return x; }
+function newFin(name) { const x = { id: uid(), name, cat: guessType(name) }; S.financeurs.push(x); save(); return x; }
+// un select avec l'option "➕ Nouveau…" : crée l'élément puis le sélectionne
+function hookNew(sel, make, label) {
+  if (!sel) return;
+  sel.addEventListener("change", () => {
+    if (sel.value !== NEW) return;
+    const n = (prompt(label) || "").trim();
+    if (!n) { sel.selectedIndex = 0; sel.dispatchEvent(new Event("change")); return; }
+    const x = make(n); sel.insertBefore(new Option(x.name, x.id, true, true), sel.querySelector(`[value="${NEW}"]`));
+    sel.value = x.id; sel.dispatchEvent(new Event("change"));
+  });
+}
+function toast(msg) {
+  let t = document.getElementById("toast"); if (!t) { t = document.createElement("div"); t.id = "toast"; document.body.appendChild(t); }
+  t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2200);
+}
+function convChoices(actionId, year, sel) {
+  const l = S.conventions.filter(c => c.year === year && c.actionId === actionId);
+  if (sel === undefined && l.length === 1) sel = l[0].id;
+  return `<option value="">— non imputée —</option>` + l.map(c => `<option value="${c.id}" ${c.id === sel ? "selected" : ""}>${esc(finName(c.financeurId))} (reste ${eur(c.amount - convStats(c).depense)})</option>`).join("");
+}
+const todayIn = y => { const t = new Date().toISOString().slice(0, 10); return yearOf(t) === y ? t : `${y}-01-01`; };
+const qaFile = `<label class="filebtn">📎 Justificatif<input type="file" name="files" multiple hidden accept=".pdf,image/*,.doc,.docx,.xls,.xlsx"><span class="mute" data-fcount></span></label>`;
+
+function qaDep() {
+  const q = UI.qa || {}, y = UI.year;
+  const actionId = byId(S.actions, q.actionId) ? q.actionId : (UI.action !== "all" ? UI.action : (S.actions[0]?.id || NEW));
+  const fours = [...new Set(S.depenses.map(d => d.fournisseur).filter(Boolean))];
+  return `<form class="card qa" id="qa" data-kind="dep" autocomplete="off"><div class="qa-t">⚡ Nouvelle facture <small class="mute">— remplis, puis Entrée</small></div>
+  <div class="qa-row">
+    <label>Date<input type="date" name="date" value="${q.date && yearOf(q.date) === y ? q.date : todayIn(y)}" required></label>
+    <label class="grow">Payé à<input name="fournisseur" list="dl-four" placeholder="Fournisseur, salarié…" required></label>
+    <label>Montant (€)<input name="amount" inputmode="decimal" placeholder="0,00" required></label>
+    <label>Catégorie<select name="cat">${catOpt(CHARGES, q.cat || "c-fourn")}</select></label>
+    <label>Action<select name="actionId">${actOpts(actionId)}</select></label>
+    <label>Imputer sur<select name="convId">${convChoices(actionId, y, q.convId)}</select></label>
+  </div>
+  <div class="qa-row end">${qaFile}<label class="chk"><input type="checkbox" name="due"> Pas encore payée</label><span class="sp"></span><button class="btn">Ajouter ↵</button></div>
+  <datalist id="dl-four">${fours.map(f => `<option value="${esc(f)}">`).join("")}</datalist></form>`;
+}
+function qaRec() {
+  const q = UI.qa || {}, y = UI.year, cs = S.conventions.filter(c => c.year === y);
+  const subv = PRODUITS.flatMap(g => g[2]).filter(c => !c[0].startsWith("p-87") && !["p-870", "p-871", "p-875"].includes(c[0]));
+  return `<form class="card qa" id="qa" data-kind="rec" autocomplete="off"><div class="qa-t">⚡ Nouvelle recette / versement <small class="mute">— remplis, puis Entrée</small></div>
+  <div class="qa-row">
+    <label>Date<input type="date" name="date" value="${q.rdate && yearOf(q.rdate) === y ? q.rdate : todayIn(y)}" required></label>
+    <label class="grow">Origine<select name="origin"><optgroup label="Conventions ${y}">${cs.map(c => `<option value="c:${c.id}" ${q.origin === "c:" + c.id ? "selected" : ""}>${esc(finName(c.financeurId))} · ${esc(actionName(c.actionId))} (reste à verser ${eur(c.amount - convStats(c).verse)})</option>`).join("")}</optgroup>
+      <optgroup label="Autre recette">${subv.map(c => `<option value="p:${c[0]}" ${q.origin === "p:" + c[0] ? "selected" : ""}>${esc(c[1])}</option>`).join("")}</optgroup><option value="${NEW}">➕ Nouveau financeur…</option></select></label>
+    <label>Montant (€)<input name="amount" inputmode="decimal" placeholder="0,00" required></label>
+    <label>Action<select name="actionId">${actOpts(byId(S.actions, q.actionId) ? q.actionId : (UI.action !== "all" ? UI.action : S.actions[0]?.id))}</select></label>
+    <label>Précision<input name="label" placeholder="Acompte, solde…"></label>
+  </div><div class="qa-row end"><span class="sp"></span><button class="btn">Ajouter ↵</button></div></form>`;
+}
+function bindQuick() {
+  const f = document.getElementById("qa"); if (!f) return;
+  const kind = f.dataset.kind, y = UI.year, E = f.elements;
+  const refreshConv = () => { if (E.convId) E.convId.innerHTML = convChoices(E.actionId.value, y); };
+  hookNew(E.actionId, newAction, "Nom de la nouvelle action (projet) :");
+  E.actionId.addEventListener("change", () => { if (E.actionId.value !== NEW) refreshConv(); });
+  if (kind === "dep") {
+    E.fournisseur.addEventListener("change", () => { // retrouve les habitudes : même fournisseur => mêmes réglages
+      const last = S.depenses.filter(d => d.fournisseur.toLowerCase() === E.fournisseur.value.trim().toLowerCase()).sort((a, b) => b.date.localeCompare(a.date))[0];
+      if (!last) return;
+      E.cat.value = last.cat; if (byId(S.actions, last.actionId)) { E.actionId.value = last.actionId; refreshConv(); }
+      const cv = byId(S.conventions, last.convId); E.convId.value = cv && cv.year === y && cv.actionId === E.actionId.value ? cv.id : E.convId.value;
+    });
+    E.files.addEventListener("change", () => f.querySelector("[data-fcount]").textContent = E.files.files.length ? ` ${E.files.files.length} fichier(s)` : "");
+  } else {
+    const sync = () => {
+      const v = E.origin.value;
+      if (v === NEW) {
+        const n = (prompt("Nom du financeur (ex : Région, CAF, Mairie…) :") || "").trim();
+        if (!n) { E.origin.selectedIndex = 0; return sync(); }
+        const x = newFin(n); toast(`Financeur « ${x.name} » créé — pense à ajouter sa convention.`);
+        const op = new Option(`${x.name} (sans convention)`, "p:" + x.cat, true, true); E.origin.appendChild(op); f.dataset.fin = x.id; E.origin.value = "p:" + x.cat; return;
+      }
+      const c = v.startsWith("c:") ? byId(S.conventions, v.slice(2)) : null;
+      if (c) E.actionId.value = c.actionId; E.actionId.disabled = !!c; if (!c) delete f.dataset.fin;
+    };
+    E.origin.addEventListener("change", sync); sync();
+  }
+  f.onsubmit = async ev => {
+    ev.preventDefault();
+    const amount = num(E.amount.value), actionId = E.actionId.value;
+    if (!amount) return E.amount.focus();
+    if (!byId(S.actions, actionId) && !(kind === "rec" && E.actionId.disabled)) return alert("Choisis ou crée une action d'abord (menu Action → ➕ Nouvelle action).");
+    const btn = f.querySelector(".btn"); btn.disabled = true;
+    if (kind === "dep") {
+      const r = { id: uid(), date: E.date.value, fournisseur: E.fournisseur.value.trim(), ref: "", label: "", cat: E.cat.value, actionId, convId: E.convId.value, amount, paid: !E.due.checked, files: [] }, errs = [];
+      S.depenses.push(r);
+      for (const file of [...E.files.files]) { if (file.size > MAX_FILE) { errs.push(file.name + " : trop gros"); continue; } try { r.files.push(await fileUpload(file, r.id)); } catch (e) { errs.push(file.name + " : " + e.message); } }
+      UI.qa = { date: r.date, cat: r.cat, actionId, convId: r.convId }; save(); render(); toast(`✓ ${r.fournisseur} · ${eur(amount)} ajoutée`);
+      if (errs.length) alert("Fichier non envoyé :\n" + errs.join("\n") + (online() ? "\n\nAs-tu lancé supabase-fichiers.sql dans Supabase ?" : ""));
+      document.querySelector('#qa [name="fournisseur"]')?.focus();
+    } else {
+      const v = E.origin.value, c = v.startsWith("c:") ? byId(S.conventions, v.slice(2)) : null, fo = c ? byId(S.financeurs, c.financeurId) : byId(S.financeurs, f.dataset.fin);
+      const r = { id: uid(), date: E.date.value, financeurId: fo?.id || "", origine: "", label: E.label.value.trim(), cat: c ? fo.cat : v.slice(2), actionId: c ? c.actionId : actionId, convId: c ? c.id : "", amount };
+      S.recettes.push(r); UI.qa = { rdate: r.date, origin: v, actionId: r.actionId }; save(); render(); toast(`✓ ${eur(amount)} encaissé`);
+      document.querySelector('#qa [name="amount"]')?.focus();
+    }
+  };
+  if (UI.fq) { UI.fq = false; f.querySelector(kind === "dep" ? '[name="fournisseur"]' : '[name="amount"]').focus({ preventScroll: true }); }
 }
 
 // ---------- Pièces jointes (Supabase Storage si connecté, sinon IndexedDB local) ----------
@@ -480,7 +595,7 @@ const FORMS = {
     <label>N° facture<input name="ref" value="${esc(o?.ref)}"></label>
     <label class="full">Libellé<input name="label" value="${esc(o?.label)}"></label>
     <label>Catégorie<select name="cat">${catOpt(CHARGES, o?.cat)}</select></label>
-    <label>Action<select name="actionId">${opt(S.actions, o?.actionId || (UI.action !== "all" ? UI.action : ""))}</select></label>
+    <label>Action<select name="actionId">${actOpts(o?.actionId || (UI.action !== "all" ? UI.action : ""))}</select></label>
     <label class="full">Imputée sur la convention<select name="convId">${convOpt(o?.convId)}</select></label>
     <label class="full">Justificatifs (facture PDF, photo…) — 10 Mo max par fichier<input type="file" name="files" multiple accept=".pdf,image/*,.doc,.docx,.xls,.xlsx"></label>
     ${(o?.files || []).length ? `<div class="full filelist"><small class="mute">Fichiers déjà joints (coche pour retirer) :</small>${o.files.map(f => `<label class="chk"><input type="checkbox" name="rmfile" value="${f.id}"> ${esc(f.name)} <small class="mute">${fsize(f.size)}</small></label>`).join("")}</div>` : ""}
@@ -488,15 +603,15 @@ const FORMS = {
   rec: o => ({ title: o ? "Modifier la recette" : "Nouvelle recette / versement", html: `
     <label>Date<input type="date" name="date" required value="${o?.date || new Date().toISOString().slice(0, 10)}"></label>
     <label>Montant (€)<input name="amount" required inputmode="decimal" value="${o?.amount ?? ""}"></label>
-    <label>Financeur<select name="financeurId"><option value="">— autre origine —</option>${opt(S.financeurs, o?.financeurId)}</select></label>
+    <label>Financeur<select name="financeurId"><option value="">— autre origine —</option>${opt(S.financeurs, o?.financeurId)}<option value="__new__">➕ Nouveau financeur…</option></select></label>
     <label>Ou origine libre<input name="origine" value="${esc(o?.origine)}" placeholder="adhérents, vente…"></label>
     <label class="full">Libellé<input name="label" value="${esc(o?.label)}" placeholder="Acompte 1, solde…"></label>
     <label>Catégorie<select name="cat">${catOpt(PRODUITS, o?.cat)}</select></label>
-    <label>Action<select name="actionId">${opt(S.actions, o?.actionId || (UI.action !== "all" ? UI.action : ""))}</select></label>
+    <label>Action<select name="actionId">${actOpts(o?.actionId || (UI.action !== "all" ? UI.action : ""))}</select></label>
     <label class="full">Convention<select name="convId">${convOpt(o?.convId)}</select></label>` }),
   conv: o => ({ title: o ? "Modifier la convention" : "Nouvelle convention", html: `
-    <label>Financeur<select name="financeurId" required>${opt(S.financeurs, o?.financeurId)}</select></label>
-    <label>Action<select name="actionId" required>${opt(S.actions, o?.actionId || (UI.action !== "all" ? UI.action : ""))}</select></label>
+    <label>Financeur<select name="financeurId" required>${finOpts(o?.financeurId)}</select></label>
+    <label>Action<select name="actionId" required>${actOpts(o?.actionId || (UI.action !== "all" ? UI.action : ""))}</select></label>
     <label>Année<select name="year">${S.years.map(y => `<option ${y === (o?.year || UI.year) ? "selected" : ""}>${y}</option>`).join("")}</select></label>
     <label>Montant accordé (€)<input name="amount" required inputmode="decimal" value="${o?.amount ?? ""}"></label>
     <label>Référence<input name="ref" value="${esc(o?.ref)}"></label>
@@ -514,18 +629,18 @@ const FORMS = {
 const COLL = { dep: "depenses", rec: "recettes", conv: "conventions", fin: "financeurs", act: "actions" };
 
 function openForm(kind, id) {
-  if (["dep", "rec", "conv"].includes(kind) && !S.actions.length) return alert("Crée d'abord une action.");
-  if (["conv"].includes(kind) && !S.financeurs.length) return alert("Crée d'abord un financeur.");
   const o = id ? byId(S[COLL[kind]], id) : null, f = FORMS[kind](o);
   const dlg = document.getElementById("dlg"), form = document.getElementById("dlgForm");
   form.innerHTML = `<h2>${f.title}</h2><div class="fg">${f.html}</div><div class="fa"><button type="button" class="btn sec" data-close>Annuler</button><button class="btn">Enregistrer</button></div>`;
   form.querySelector("[data-close]").onclick = () => dlg.close();
   const fs = form.elements.financeurId, cs = form.elements.cat;
+  hookNew(form.elements.actionId, newAction, "Nom de la nouvelle action (projet) :"); hookNew(fs, newFin, "Nom du financeur (ex : Région, CAF, Mairie…) :");
   if (kind === "rec" && fs && cs) fs.onchange = () => { const fo = byId(S.financeurs, fs.value); if (fo) cs.value = fo.cat; };
   form.onsubmit = async ev => {
     ev.preventDefault();
     const fd = new FormData(form), d = Object.fromEntries(fd), picked = [...(form.elements.files?.files || [])], rm = fd.getAll("rmfile");
     delete d.files; delete d.rmfile;
+    if (d.actionId === NEW || d.financeurId === NEW || ("actionId" in d && !d.actionId)) return alert("Choisis une action (ou crée-la avec ➕).");
     if ("amount" in d) d.amount = num(d.amount);
     if ("paid" in d) d.paid = d.paid === "1";
     if ("year" in d) d.year = +d.year;
@@ -571,6 +686,9 @@ function bindCommon() {
     if (k === "conv") { S.depenses.forEach(d => d.convId === i && (d.convId = "")); S.recettes.forEach(r => r.convId === i && (r.convId = "")); }
     save(); render();
   });
+  v.querySelectorAll("[data-pay]").forEach(b => b.onclick = () => { const d = byId(S.depenses, b.dataset.pay); d.paid = true; save(); render(); toast("✓ Marquée comme payée"); });
+  v.querySelectorAll("[data-qgo]").forEach(b => b.onclick = () => { UI.page = b.dataset.qgo; UI.fq = true; render(); });
+  bindQuick();
   v.querySelectorAll("[data-files]").forEach(b => b.onclick = () => openFiles(b.dataset.files));
   v.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { UI.page = b.dataset.go; render(); });
   v.querySelectorAll("[data-csv]").forEach(b => b.onclick = () => csv(b.dataset.csv));
