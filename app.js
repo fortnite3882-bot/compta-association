@@ -45,7 +45,7 @@ function load() {
   return blank();
 }
 function save() {
-  try { localStorage.setItem(storageKey(), JSON.stringify(S)); } catch (e) {}
+  try { localStorage.setItem(storageKey(), JSON.stringify(S)); localStorage.setItem(storageKey() + ":t", new Date().toISOString()); } catch (e) {}
   if (SB && USER) { setSync("saving"); clearTimeout(saveTimer); saveTimer = setTimeout(push, 700); }
 }
 let lastErr = "", retries = 0;
@@ -63,9 +63,12 @@ async function push() {
 }
 async function pull() {
   const { data, error } = await SB.from("comptes").select("data,updated_at").eq("user_id", USER.id).maybeSingle();
-  if (error) { console.error(error); setSync("error"); return null; }
-  return data;
+  if (error) { console.error(error); lastErr = (error.message || "erreur") + (error.code ? " [" + error.code + "]" : ""); setSync("error"); return { error }; }
+  return { row: data };
 }
+// des données « vides » = rien saisi du tout (ne doivent jamais écraser de vraies données)
+const hasContent = d => !!d && ["actions", "financeurs", "conventions", "budget", "depenses", "recettes"].some(k => (d[k] || []).length);
+function backupLocal() { try { localStorage.setItem(storageKey() + ":backup", JSON.stringify({ at: new Date().toISOString(), data: S })); } catch (e) {} }
 function setSync(st) {
   syncState = st;
   const el = document.getElementById("syncState");
@@ -110,19 +113,21 @@ async function start(session) {
   USER = session.user;
   const a = document.getElementById("auth"); if (a) a.remove();
   document.getElementById("app").style.display = "";
-  const local = load(), row = await pull();
-  if (row) applyRemote(row);
-  else {
-    // premier passage : on reprend les données locales éventuelles
-    S = local; await push();
-  }
+  const local = load(), { row, error } = await pull();
+  if (error) { S = local; render(); return; }            // pas de réponse du serveur : on garde le local, on ne touche à rien
+  const tl = localStorage.getItem(storageKey() + ":t") || "";
+  if (hasContent(local) && (!row || !hasContent(row.data) || tl > row.updated_at)) { S = local; await push(); } // le local est plus complet ou plus récent : il part en ligne
+  else if (row && hasContent(row.data)) { if (hasContent(local)) backupLocal(); applyRemote(row); }
+  else { S = local; if (hasContent(local)) await push(); setSync("ok"); }
   render();
 }
 async function logout() { if (saveTimer) await push(); await SB.auth.signOut(); USER = null; S = blank(); authScreen(); }
 async function refreshIfNewer() {
   if (!SB || !USER || saveTimer) return;
-  const row = await pull();
-  if (row && row.updated_at > lastRemote) { applyRemote(row); render(); }
+  if (!lastRemote) return;                                // cet appareil ne s'est pas encore synchronisé : on n'écrase rien
+  const { row } = await pull();
+  if (row && hasContent(row.data) && row.updated_at > lastRemote) { backupLocal(); applyRemote(row); render(); }
+  else if (row && !hasContent(row.data) && hasContent(S)) push();
 }
 async function boot() {
   if (!SB) return render();
