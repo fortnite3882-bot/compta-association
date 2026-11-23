@@ -48,11 +48,18 @@ function save() {
   try { localStorage.setItem(storageKey(), JSON.stringify(S)); } catch (e) {}
   if (SB && USER) { setSync("saving"); clearTimeout(saveTimer); saveTimer = setTimeout(push, 700); }
 }
+let lastErr = "", retries = 0;
 async function push() {
   clearTimeout(saveTimer); saveTimer = null;
   const at = new Date().toISOString();
-  const { error } = await SB.from("comptes").upsert({ user_id: USER.id, data: S, updated_at: at });
-  if (error) { console.error(error); setSync("error"); } else { lastRemote = at; setSync("ok"); }
+  let { error } = await SB.from("comptes").upsert({ user_id: USER.id, data: S, updated_at: at });
+  if (error && /jwt|token|expired|401/i.test(error.message + (error.code || ""))) { // session expirée : on la renouvelle et on réessaie
+    await SB.auth.refreshSession(); ({ error } = await SB.from("comptes").upsert({ user_id: USER.id, data: S, updated_at: at }));
+  }
+  if (error) {
+    console.error(error); lastErr = (error.message || "erreur inconnue") + (error.code ? " [" + error.code + "]" : "") + (error.hint ? " — " + error.hint : ""); setSync("error");
+    if (retries < 3) { retries++; clearTimeout(saveTimer); saveTimer = setTimeout(push, 8000 * retries); } // nouvelle tentative automatique
+  } else { retries = 0; lastErr = ""; lastRemote = at; setSync("ok"); }
 }
 async function pull() {
   const { data, error } = await SB.from("comptes").select("data,updated_at").eq("user_id", USER.id).maybeSingle();
@@ -62,7 +69,7 @@ async function pull() {
 function setSync(st) {
   syncState = st;
   const el = document.getElementById("syncState");
-  if (el) el.textContent = { saving: "⏳ Enregistrement…", ok: "☁️ Enregistré en ligne", error: "⚠️ Erreur de sauvegarde" }[st] || "";
+  if (el) el.textContent = { saving: "⏳ Enregistrement…", ok: "☁️ Enregistré en ligne", error: "⚠️ Erreur de sauvegarde (cliquer pour le détail)" }[st] || "";
 }
 function applyRemote(row) {
   S = Object.assign(blank(), row.data); lastRemote = row.updated_at;
@@ -128,6 +135,7 @@ async function boot() {
   const { data } = await SB.auth.getSession();
   if (data.session) start(data.session); else authScreen();
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshIfNewer(); else if (saveTimer) push(); });
+  addEventListener("online", () => { if (SB && USER && syncState === "error") { retries = 0; push(); } });
   addEventListener("pagehide", () => { if (saveTimer) push(); });
 }
 
@@ -183,7 +191,11 @@ function nav() {
   document.getElementById("assocName").textContent = S.assoc;
   const sf = document.getElementById("sideFoot");
   sf.innerHTML = SB && USER ? `<small>${esc(USER.email)}</small><small id="syncState"></small><button class="btn sm sec" id="logout">Se déconnecter</button>` : `<small>Mode local : données enregistrées dans ce navigateur seulement. Exporte une sauvegarde (Paramètres).</small>`;
-  if (SB && USER) { document.getElementById("logout").onclick = logout; setSync(syncState); }
+  if (SB && USER) {
+    document.getElementById("logout").onclick = logout; setSync(syncState);
+    const ss = document.getElementById("syncState"); ss.style.cursor = "pointer";
+    ss.onclick = () => { if (syncState === "error") { alert("Sauvegarde en ligne impossible.\n\nDétail : " + lastErr + "\n\nTes données sont gardées dans ce navigateur. Nouvelle tentative lancée."); retries = 0; push(); } else push(); };
+  }
   document.getElementById("title").textContent = PAGES.find(p => p[0] === UI.page)[2];
   const fy = document.getElementById("fYear");
   fy.innerHTML = [...S.years].sort().map(y => `<option ${y === UI.year ? "selected" : ""}>${y}</option>`).join("");
