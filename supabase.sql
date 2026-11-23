@@ -11,3 +11,7 @@ alter table public.comptes enable row level security;
 create policy "lecture perso" on public.comptes for select using (auth.uid() = user_id);
 create policy "ajout perso"   on public.comptes for insert with check (auth.uid() = user_id);
 create policy "modif perso"   on public.comptes for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Droits d'accès à la table pour les utilisateurs connectés (nécessaire sur les projets Supabase récents)
+grant usage on schema public to authenticated;
+grant select, insert, update on public.comptes to authenticated;
