@@ -404,7 +404,7 @@ function dep() {
     <select data-ffin><option value="">Tous financeurs</option>${S.financeurs.map(f => `<option value="${f.id}" ${UI.ffin === f.id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select>
     <select data-fstat><option value="">Payées + à payer</option><option value="p" ${UI.fstat === "p" ? "selected" : ""}>Payées</option><option value="n" ${UI.fstat === "n" ? "selected" : ""}>À payer</option></select>
     <span class="sp"></span><button class="btn sec" data-csv="dep">⬇ CSV</button></div>
-  <div class="card"><div class="scroll"><table><tr><th>Date</th><th>Payé à</th><th>N° facture</th><th>Libellé</th><th>Catégorie</th><th>Action</th><th>Financeur imputé</th><th class="num">Montant</th><th></th></tr>
+  <div class="card"><div class="scroll"><table><tr><th>Date</th><th>Payé à</th><th>N° facture</th><th>Explication</th><th>Catégorie</th><th>Action</th><th>Financeur imputé</th><th class="num">Montant</th><th></th></tr>
   ${l.map(d => { const cv = byId(S.conventions, d.convId); return `<tr><td>${fdate(d.date)}</td><td><b>${esc(d.fournisseur)}</b></td><td>${esc(d.ref)}</td><td>${esc(d.label)} ${d.files?.length ? `<button class="btn sm sec" data-files="${d.id}" title="Justificatifs">📎 ${d.files.length}</button>` : ""}</td><td><small>${esc(catLabel[d.cat] || "")}</small></td>
     <td><span class="dot" style="background:${actionColor(d.actionId)}"></span>${esc(actionName(d.actionId))}</td><td>${cv ? esc(finName(cv.financeurId)) : '<span class="mute">—</span>'}</td>
     <td class="num"><b>${eur(d.amount)}</b> ${d.paid ? "" : `<button class="pill warn" data-pay="${d.id}" title="Cliquer pour marquer comme payée">à payer · ✓ payée ?</button>`}</td>
@@ -502,6 +502,7 @@ function qaDep() {
     <label>Action<select name="actionId">${actOpts(actionId)}</select></label>
     <label>Imputer sur<select name="convId">${convChoices(actionId, y, q.convId)}</select></label>
   </div>
+  <div class="qa-row"><label class="grow">Explication<input name="label" placeholder="À quoi correspond cette dépense ? (facultatif)"></label></div>
   <div class="qa-row end">${qaFile}<label class="chk"><input type="checkbox" name="due"> Pas encore payée</label><span class="sp"></span><button class="btn">Ajouter ↵</button></div>
   <datalist id="dl-four">${fours.map(f => `<option value="${esc(f)}">`).join("")}</datalist></form>`;
 }
@@ -553,7 +554,7 @@ function bindQuick() {
     if (!byId(S.actions, actionId) && !(kind === "rec" && E.actionId.disabled)) return alert("Choisis ou crée une action d'abord (menu Action → ➕ Nouvelle action).");
     const btn = f.querySelector(".btn"); btn.disabled = true;
     if (kind === "dep") {
-      const r = { id: uid(), date: E.date.value, fournisseur: E.fournisseur.value.trim(), ref: "", label: "", cat: E.cat.value, actionId, convId: E.convId.value, amount, paid: !E.due.checked, files: [] }, errs = [];
+      const r = { id: uid(), date: E.date.value, fournisseur: E.fournisseur.value.trim(), ref: "", label: E.label.value.trim(), cat: E.cat.value, actionId, convId: E.convId.value, amount, paid: !E.due.checked, files: [] }, errs = [];
       S.depenses.push(r);
       for (const file of [...E.files.files]) { if (file.size > MAX_FILE) { errs.push(file.name + " : trop gros"); continue; } try { r.files.push(await fileUpload(file, r.id)); } catch (e) { errs.push(file.name + " : " + e.message); } }
       UI.qa = { date: r.date, cat: r.cat, actionId, convId: r.convId }; save(); render(); toast(`✓ ${r.fournisseur} · ${eur(amount)} ajoutée`);
@@ -610,7 +611,7 @@ const FORMS = {
     <label>Montant payé (€)<input name="amount" required inputmode="decimal" value="${o?.amount ?? ""}"></label>
     <label>Payé à (fournisseur)<input name="fournisseur" required value="${esc(o?.fournisseur)}"></label>
     <label>N° facture<input name="ref" value="${esc(o?.ref)}"></label>
-    <label class="full">Libellé<input name="label" value="${esc(o?.label)}"></label>
+    <label class="full">Explication<input name="label" value="${esc(o?.label)}" placeholder="À quoi correspond cette dépense ?"></label>
     <label>Catégorie<select name="cat">${catOpt(CHARGES, o?.cat)}</select></label>
     <label>Action<select name="actionId">${actOpts(o?.actionId || (UI.action !== "all" ? UI.action : ""))}</select></label>
     <label class="full">Imputée sur la convention<select name="convId">${convOpt(o?.convId)}</select></label>
@@ -686,7 +687,7 @@ function download(name, text, type) {
 function csv(kind) {
   const { year, action } = UI, q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
   let rows;
-  if (kind === "dep") rows = [["Date", "Fournisseur", "N° facture", "Libellé", "Catégorie", "Action", "Financeur", "Montant", "Statut"], ...S.depenses.filter(d => inScope(d, year, action)).map(d => [d.date, d.fournisseur, d.ref, d.label, catLabel[d.cat], actionName(d.actionId), finName(byId(S.conventions, d.convId)?.financeurId), String(d.amount).replace(".", ","), d.paid ? "Payée" : "À payer"])];
+  if (kind === "dep") rows = [["Date", "Fournisseur", "N° facture", "Explication", "Catégorie", "Action", "Financeur", "Montant", "Statut"], ...S.depenses.filter(d => inScope(d, year, action)).map(d => [d.date, d.fournisseur, d.ref, d.label, catLabel[d.cat], actionName(d.actionId), finName(byId(S.conventions, d.convId)?.financeurId), String(d.amount).replace(".", ","), d.paid ? "Payée" : "À payer"])];
   else rows = [["Date", "Origine", "Libellé", "Catégorie", "Action", "Montant"], ...recs(year, action).map(r => [r.date, r.financeurId ? finName(r.financeurId) : r.origine, r.label, catLabel[r.cat], actionName(r.actionId), String(r.amount).replace(".", ",")])];
   download(`${kind === "dep" ? "factures" : "recettes"}-${year}.csv`, "﻿" + rows.map(r => r.map(q).join(";")).join("\n"), "text/csv");
 }
