@@ -24,7 +24,7 @@ const SUBV_CATS = PRODUITS[1][2];
 const COLORS = ["#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"];
 
 // ---------- État ----------
-const KEY = "compta-asso-v1";
+const KEY = "compta-asso-v1", VERSION = "v2026-11-23b";
 const uid = () => Math.random().toString(36).slice(2, 10);
 const thisYear = new Date().getFullYear();
 
@@ -194,6 +194,7 @@ const PAGES = [
 function nav() {
   document.getElementById("nav").innerHTML = PAGES.map(p => `<a data-p="${p[0]}" class="${UI.page === p[0] ? "on" : ""}"><span>${p[1]}</span>${p[2]}</a>`).join("");
   document.getElementById("assocName").textContent = S.assoc;
+  document.getElementById("ver").textContent = VERSION;
   const sf = document.getElementById("sideFoot");
   sf.innerHTML = SB && USER ? `<small>${esc(USER.email)}</small><small id="syncState"></small><button class="btn sm sec" id="logout">Se déconnecter</button>` : `<small>Mode local : données enregistrées dans ce navigateur seulement. Exporte une sauvegarde (Paramètres).</small>`;
   if (SB && USER) {
